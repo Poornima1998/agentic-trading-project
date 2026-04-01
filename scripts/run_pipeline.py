@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.aws_utils import AWSClient
 from src.backtesting import VectorizedBacktester
 from src.config import PROCESSED_DIR
 from src.data_ingestion import MarketDataIngestion, parse_symbols
@@ -64,6 +65,25 @@ def main() -> None:
     save_dataframe(backtest_result.equity_curve, equity_path, index=False)
     metrics_path = PROCESSED_DIR / f"metrics_{'_'.join(symbols)}_{args.period}_{args.interval}.json"
     save_json(backtest_result.metrics, metrics_path)
+
+    # Optional cloud persistence
+    try:
+        aws = AWSClient()
+    # Upload local output files to S3
+        for path in raw_paths:
+            aws.upload_file_to_s3(path, f"raw/{path.name}")
+
+        aws.upload_file_to_s3(processed_path, f"processed/{processed_path.name}")
+        aws.upload_file_to_s3(equity_path, f"processed/{equity_path.name}")
+        aws.upload_file_to_s3(metrics_path, f"processed/{metrics_path.name}")
+
+    # Write structured data to RDS
+        aws.write_dataframe_to_rds(final_df, "trading_signals", if_exists="replace")
+        aws.write_dataframe_to_rds(backtest_result.equity_curve, "equity_curve", if_exists="replace")
+        print("Cloud persistence completed successfully.")
+
+    except Exception as e:
+        print(f"Cloud persistence skipped or failed: {e}")
 
     print("Pipeline completed successfully.")
     print(f"Saved raw files: {[str(path) for path in raw_paths]}")
